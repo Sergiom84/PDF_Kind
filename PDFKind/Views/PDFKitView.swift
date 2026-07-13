@@ -6,6 +6,31 @@ import PDFKit
 final class PDFViewProxy: ObservableObject {
     weak var pdfView: PDFView?
 
+    /// Nivel de zoom de lectura como multiplicador del ajuste a pantalla.
+    /// 1.0 = "Ajustar" (autoScales). >1 mantiene ese aumento al pasar de página.
+    @Published var zoomMultiplier: CGFloat = 1.0
+
+    func setZoom(_ multiplier: CGFloat) {
+        zoomMultiplier = multiplier
+        applyZoom()
+    }
+
+    /// Aplica el zoom actual al PDFView. Se vuelve a llamar en cada cambio de
+    /// página para que el aumento se conserve sin tener que rehacerlo a mano.
+    func applyZoom() {
+        guard let pdfView else { return }
+        if zoomMultiplier <= 1.001 {
+            pdfView.autoScales = true
+        } else {
+            pdfView.autoScales = false
+            let fit = pdfView.scaleFactorForSizeToFit
+            guard fit > 0 else { return }
+            pdfView.minScaleFactor = fit * 0.5
+            pdfView.maxScaleFactor = fit * 8
+            pdfView.scaleFactor = fit * zoomMultiplier
+        }
+    }
+
     func goToPage(index: Int) {
         guard let pdfView, let document = pdfView.document,
               index >= 0, index < document.pageCount,
@@ -84,14 +109,16 @@ struct PDFKitView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onPageChange: onPageChange)
+        Coordinator(onPageChange: onPageChange, proxy: proxy)
     }
 
     final class Coordinator: NSObject {
         let onPageChange: (Int) -> Void
+        weak var proxy: PDFViewProxy?
 
-        init(onPageChange: @escaping (Int) -> Void) {
+        init(onPageChange: @escaping (Int) -> Void, proxy: PDFViewProxy) {
             self.onPageChange = onPageChange
+            self.proxy = proxy
         }
 
         @objc func pageChanged(_ notification: Notification) {
@@ -99,6 +126,10 @@ struct PDFKitView: UIViewRepresentable {
                   let document = pdfView.document,
                   let currentPage = pdfView.currentPage else { return }
             onPageChange(document.index(for: currentPage))
+            // Conserva el zoom de lectura en la nueva página.
+            DispatchQueue.main.async { [weak proxy] in
+                proxy?.applyZoom()
+            }
         }
 
         deinit {

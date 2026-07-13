@@ -18,6 +18,18 @@ struct ReaderView: View {
     @State private var sliderPage: Double = 0
     @State private var isDraggingSlider = false
     @State private var toastMessage: String?
+    @State private var showControls = true
+
+    /// Preferencias de lectura (persisten entre libros y sesiones).
+    @AppStorage("showReaderProgress") private var showProgressBar = true
+    @AppStorage("readingZoom") private var readingZoom: Double = 1.0
+
+    /// Niveles de zoom disponibles desde la lupa. 1.0 = Ajustar a pantalla.
+    private let zoomLevels: [Double] = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
+
+    private func zoomLabel(_ z: Double) -> String {
+        z <= 1.001 ? "Ajustar" : "\(Int(z * 100))%"
+    }
 
     init(book: Book) {
         _book = State(initialValue: book)
@@ -47,11 +59,16 @@ struct ReaderView: View {
                 )
             }
         }
-        .navigationTitle(book.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { readerToolbar }
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+        .overlay(alignment: .topLeading) {
+            if document != nil { backButton }
+        }
+        .overlay(alignment: .topTrailing) {
+            if document != nil { floatingControls }
+        }
         .safeAreaInset(edge: .bottom) {
-            if document != nil { bottomBar }
+            if document != nil && showProgressBar { bottomBar }
         }
         .overlay(alignment: .top) {
             if let toastMessage {
@@ -95,6 +112,8 @@ struct ReaderView: View {
             if document == nil {
                 document = PDFDocument(url: store.pdfURL(for: book))
                 sliderPage = Double(book.lastPageIndex)
+                // Restaura el zoom de lectura tras montar la vista.
+                DispatchQueue.main.async { proxy.setZoom(readingZoom) }
             }
         }
         .onDisappear {
@@ -103,53 +122,111 @@ struct ReaderView: View {
         }
     }
 
-    // MARK: - Toolbar
+    // MARK: - Controles flotantes
 
-    @ToolbarContentBuilder
-    private var readerToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
+    /// Flecha de volver, flotante en el margen izquierdo.
+    private var backButton: some View {
+        Button {
+            dismiss()
+        } label: {
+            Image(systemName: "chevron.left")
+                .floatingControlStyle()
+        }
+        .padding(.leading, 8)
+        .padding(.top, 4)
+    }
+
+    /// Columna vertical de controles pegada al borde derecho. El botón superior
+    /// pliega/despliega el resto para leer a pantalla casi completa.
+    private var floatingControls: some View {
+        VStack(spacing: 12) {
             Button {
-                book.toggleBookmark(page: book.lastPageIndex)
-                persist()
-                showToast(currentPageIsBookmarked ? "Marcador añadido" : "Marcador quitado")
+                withAnimation(.easeInOut(duration: 0.2)) { showControls.toggle() }
             } label: {
-                Image(systemName: currentPageIsBookmarked ? "bookmark.fill" : "bookmark")
+                Image(systemName: showControls ? "chevron.up" : "slider.horizontal.3")
+                    .floatingControlStyle()
             }
 
-            Menu {
-                Button {
-                    showingAddNote = true
-                } label: {
-                    Label("Nueva nota en esta página", systemImage: "square.and.pencil")
+            if showControls {
+                zoomMenu
+                bookmarkButton
+                optionsMenu
+            }
+        }
+        .padding(.trailing, 8)
+        .padding(.top, 4)
+    }
+
+    private var zoomMenu: some View {
+        Menu {
+            Picker("Zoom", selection: Binding(
+                get: { readingZoom },
+                set: { newValue in
+                    readingZoom = newValue
+                    proxy.setZoom(newValue)
+                    showToast("Zoom \(zoomLabel(newValue))")
                 }
-                Button {
-                    if proxy.highlightCurrentSelection(saveTo: store.pdfURL(for: book)) {
-                        showToast("Texto subrayado")
-                    } else {
-                        showToast("Selecciona texto primero")
-                    }
-                } label: {
-                    Label("Subrayar selección", systemImage: "highlighter")
+            )) {
+                ForEach(zoomLevels, id: \.self) { level in
+                    Text(zoomLabel(level)).tag(level)
                 }
-                Divider()
-                Button {
-                    showingNotes = true
-                } label: {
-                    Label("Ver notas (\(book.notes.count))", systemImage: "note.text")
-                }
-                Button {
-                    showingBookmarks = true
-                } label: {
-                    Label("Ver marcadores (\(book.bookmarks.count))", systemImage: "bookmark")
-                }
-                Button {
-                    showingSearch = true
-                } label: {
-                    Label("Buscar en el libro", systemImage: "magnifyingglass")
+            }
+        } label: {
+            Image(systemName: "plus.magnifyingglass")
+                .floatingControlStyle()
+        }
+    }
+
+    private var bookmarkButton: some View {
+        Button {
+            book.toggleBookmark(page: book.lastPageIndex)
+            persist()
+            showToast(currentPageIsBookmarked ? "Marcador añadido" : "Marcador quitado")
+        } label: {
+            Image(systemName: currentPageIsBookmarked ? "bookmark.fill" : "bookmark")
+                .floatingControlStyle()
+        }
+    }
+
+    private var optionsMenu: some View {
+        Menu {
+            Button {
+                showingAddNote = true
+            } label: {
+                Label("Nueva nota en esta página", systemImage: "square.and.pencil")
+            }
+            Button {
+                if proxy.highlightCurrentSelection(saveTo: store.pdfURL(for: book)) {
+                    showToast("Texto subrayado")
+                } else {
+                    showToast("Selecciona texto primero")
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Label("Subrayar selección", systemImage: "highlighter")
             }
+            Divider()
+            Button {
+                showingNotes = true
+            } label: {
+                Label("Ver notas (\(book.notes.count))", systemImage: "note.text")
+            }
+            Button {
+                showingBookmarks = true
+            } label: {
+                Label("Ver marcadores (\(book.bookmarks.count))", systemImage: "bookmark")
+            }
+            Button {
+                showingSearch = true
+            } label: {
+                Label("Buscar en el libro", systemImage: "magnifyingglass")
+            }
+            Divider()
+            Toggle(isOn: $showProgressBar) {
+                Label("Barra de progreso", systemImage: "chart.bar")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .floatingControlStyle()
         }
     }
 
@@ -188,5 +265,19 @@ struct ReaderView: View {
             try? await Task.sleep(for: .seconds(1.8))
             withAnimation { toastMessage = nil }
         }
+    }
+}
+
+// MARK: - Estilo de botón flotante
+
+private extension View {
+    /// Icono compacto sobre fondo circular translúcido, legible encima del PDF.
+    func floatingControlStyle() -> some View {
+        self
+            .font(.system(size: 17, weight: .semibold))
+            .frame(width: 40, height: 40)
+            .background(.ultraThinMaterial, in: Circle())
+            .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
+            .contentShape(Circle())
     }
 }
