@@ -38,6 +38,19 @@ final class PDFViewProxy: ObservableObject {
         pdfView.go(to: page)
     }
 
+    /// Avanza de página sin depender del gesto de swipe: funciona con
+    /// cualquier zoom activo (el swipe manual sí queda bloqueado al hacer zoom).
+    var canGoToNextPage: Bool { pdfView?.canGoToNextPage ?? false }
+    var canGoToPreviousPage: Bool { pdfView?.canGoToPreviousPage ?? false }
+
+    func goToNextPage() {
+        pdfView?.goToNextPage(nil)
+    }
+
+    func goToPreviousPage() {
+        pdfView?.goToPreviousPage(nil)
+    }
+
     func goTo(selection: PDFSelection) {
         guard let pdfView else { return }
         if let page = selection.pages.first {

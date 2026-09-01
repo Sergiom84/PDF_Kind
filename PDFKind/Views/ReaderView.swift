@@ -6,6 +6,7 @@ import PDFKit
 struct ReaderView: View {
     @EnvironmentObject private var store: LibraryStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var book: Book
     @State private var document: PDFDocument?
@@ -120,6 +121,14 @@ struct ReaderView: View {
             book.lastReadAt = Date()
             persist()
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Guarda la última página también al segundo plano/cierre: onDisappear
+            // no salta si el usuario mata la app en vez de volver atrás.
+            if newPhase != .active, document != nil {
+                book.lastReadAt = Date()
+                persist()
+            }
+        }
     }
 
     // MARK: - Controles flotantes
@@ -149,6 +158,7 @@ struct ReaderView: View {
 
             if showControls {
                 zoomMenu
+                pageTurnButtons
                 bookmarkButton
                 optionsMenu
             }
@@ -174,6 +184,26 @@ struct ReaderView: View {
         } label: {
             Image(systemName: "plus.magnifyingglass")
                 .floatingControlStyle()
+        }
+    }
+
+    /// Avanza/retrocede página conservando el zoom actual, sin necesidad de
+    /// reducir manualmente para poder deslizar.
+    private var pageTurnButtons: some View {
+        VStack(spacing: 12) {
+            Button {
+                proxy.goToPreviousPage()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .floatingControlStyle()
+            }
+
+            Button {
+                proxy.goToNextPage()
+            } label: {
+                Image(systemName: "chevron.right")
+                    .floatingControlStyle()
+            }
         }
     }
 
